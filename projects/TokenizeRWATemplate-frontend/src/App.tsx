@@ -1,6 +1,9 @@
 import { SupportedWallet, WalletId, WalletManager, WalletProvider } from '@txnlab/use-wallet-react'
 import { SnackbarProvider } from 'notistack'
+import { BrowserRouter, Routes, Route } from 'react-router-dom'
 import Home from './Home'
+import Layout from './Layout'
+import TokenizePage from './TokenizePage'
 import { getAlgodConfigFromViteEnvironment, getKmdConfigFromViteEnvironment } from './utils/network/getAlgoClientConfigs'
 
 let supportedWallets: SupportedWallet[]
@@ -17,13 +20,7 @@ if (import.meta.env.VITE_ALGOD_NETWORK === 'localnet') {
     },
   ]
 } else {
-  supportedWallets = [
-    { id: WalletId.DEFLY },
-    { id: WalletId.PERA },
-    { id: WalletId.EXODUS },
-    // If you are interested in WalletConnect v2 provider
-    // refer to https://github.com/TxnLab/use-wallet for detailed integration instructions
-  ]
+  supportedWallets = [{ id: WalletId.DEFLY }, { id: WalletId.PERA }, { id: WalletId.EXODUS }]
 }
 
 export default function App() {
@@ -49,7 +46,14 @@ export default function App() {
   return (
     <SnackbarProvider maxSnack={3}>
       <WalletProvider manager={walletManager}>
-        <Home />
+        <BrowserRouter>
+          <Routes>
+            <Route element={<Layout />}>
+              <Route path="/" element={<Home />} />
+              <Route path="/tokenize" element={<TokenizePage />} />
+            </Route>
+          </Routes>
+        </BrowserRouter>
       </WalletProvider>
     </SnackbarProvider>
   )
