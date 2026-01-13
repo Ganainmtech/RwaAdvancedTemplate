@@ -33,34 +33,22 @@ export function Web3AuthProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     const initializeWeb3Auth = async () => {
-      console.log('🎯 WEB3AUTHPROVIDER: Starting initialization')
-      console.log('🎯 Environment variables:', {
-        clientId: import.meta.env.VITE_WEB3AUTH_CLIENT_ID ? 'SET' : 'MISSING',
-        mode: import.meta.env.MODE,
-        dev: import.meta.env.DEV,
-      })
-
       try {
         setIsLoading(true)
         setError(null)
 
-        console.log('🎯 Calling initWeb3Auth()...')
         const web3auth = await initWeb3Auth()
-        console.log('🎯 initWeb3Auth() returned:', web3auth)
 
         setWeb3AuthInstance(web3auth)
 
         if (web3auth.status === 'connected' && web3auth.provider) {
-          console.log('🎯 User already connected from previous session')
           setProvider(web3auth.provider)
           setIsConnected(true)
 
           try {
             const account = await getAlgorandAccount(web3auth.provider)
             setAlgorandAccount(account)
-            console.log('🎯 Algorand account derived:', account.address)
           } catch (err) {
-            console.error('🎯 Failed to derive Algorand account:', err)
             setError('Failed to derive Algorand account. Please reconnect.')
           }
 
@@ -68,7 +56,6 @@ export function Web3AuthProvider({ children }: { children: ReactNode }) {
             const userInformation = await getWeb3AuthUserInfo()
             if (userInformation) {
               setUserInfo(userInformation)
-              console.log('🎯 User info fetched:', userInformation)
             }
           } catch (err) {
             console.error('🎯 Failed to fetch user info:', err)
@@ -76,7 +63,6 @@ export function Web3AuthProvider({ children }: { children: ReactNode }) {
         }
 
         setIsInitialized(true)
-        console.log('🎯 WEB3AUTHPROVIDER: Initialization complete')
       } catch (err) {
         const errorMessage = err instanceof Error ? err.message : 'Failed to initialize Web3Auth'
         console.error('🎯 WEB3AUTHPROVIDER: Initialization error:', err)
@@ -91,7 +77,6 @@ export function Web3AuthProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const login = async () => {
-    console.log('🎯 LOGIN: Called')
 
     if (!web3AuthInstance) {
       console.error('🎯 LOGIN: Web3Auth not initialized')
@@ -109,9 +94,7 @@ export function Web3AuthProvider({ children }: { children: ReactNode }) {
       setIsLoading(true)
       setError(null)
 
-      console.log('🎯 LOGIN: Calling web3AuthInstance.connect()...')
       const web3authProvider = await web3AuthInstance.connect()
-      console.log('🎯 LOGIN: connect() returned:', web3authProvider ? 'PROVIDER' : 'NULL')
 
       if (!web3authProvider) {
         throw new Error('Failed to connect Web3Auth provider')
@@ -121,28 +104,22 @@ export function Web3AuthProvider({ children }: { children: ReactNode }) {
       setIsConnected(true)
 
       try {
-        console.log('🎯 LOGIN: Deriving Algorand account...')
         const account = await getAlgorandAccount(web3authProvider)
         setAlgorandAccount(account)
-        console.log('🎯 LOGIN: Successfully derived Algorand account:', account.address)
       } catch (err) {
         const errorMessage = err instanceof Error ? err.message : 'Failed to derive Algorand account'
         setError(errorMessage)
-        console.error('🎯 LOGIN: Algorand account derivation error:', err)
       }
 
       try {
-        console.log('🎯 LOGIN: Fetching user info...')
         const userInformation = await getWeb3AuthUserInfo()
         if (userInformation) {
           setUserInfo(userInformation)
-          console.log('🎯 LOGIN: User info fetched')
         }
       } catch (err) {
         console.error('🎯 LOGIN: Failed to fetch user info:', err)
       }
 
-      console.log('🎯 LOGIN: Complete')
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Login failed'
       console.error('🎯 LOGIN: Error:', err)
@@ -156,8 +133,6 @@ export function Web3AuthProvider({ children }: { children: ReactNode }) {
   }
 
   const logout = async () => {
-    console.log('🎯 LOGOUT: Called')
-
     try {
       setIsLoading(true)
       setError(null)
@@ -169,7 +144,6 @@ export function Web3AuthProvider({ children }: { children: ReactNode }) {
       setAlgorandAccount(null)
       setUserInfo(null)
 
-      console.log('🎯 LOGOUT: Complete')
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Logout failed'
       console.error('🎯 LOGOUT: Error:', err)
@@ -185,12 +159,10 @@ export function Web3AuthProvider({ children }: { children: ReactNode }) {
   }
 
   const refreshUserInfo = async () => {
-    console.log('🎯 REFRESH: Called')
     try {
       const userInformation = await getWeb3AuthUserInfo()
       if (userInformation) {
         setUserInfo(userInformation)
-        console.log('🎯 REFRESH: User info refreshed')
       }
     } catch (err) {
       console.error('🎯 REFRESH: Failed:', err)
