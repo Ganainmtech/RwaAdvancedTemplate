@@ -45,7 +45,7 @@ export async function initWeb3Auth(): Promise<Web3Auth> {
           primary: '#000000',
         },
         mode: 'light' as const,
-        loginMethodsOrder: ['google', 'github', 'twitter'],
+        loginMethodsOrder: ['google', 'facebook', 'github', 'twitter'],
         defaultLanguage: 'en',
       },
     }
@@ -78,6 +78,7 @@ export interface Web3AuthUserInfo {
   email?: string
   name?: string
   profileImage?: string
+  typeOfLogin?: string
   [key: string]: unknown
 }
 

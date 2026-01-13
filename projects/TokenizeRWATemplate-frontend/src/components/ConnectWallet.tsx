@@ -1,5 +1,6 @@
-import { useWallet, Wallet, WalletId } from '@txnlab/use-wallet-react'
-import { useEffect, useRef } from 'react'
+import { WalletId } from '@txnlab/use-wallet-react'
+import { useEffect, useRef, useState } from 'react'
+import { SocialLoginProvider, useUnifiedWallet } from '../hooks/useUnifiedWallet'
 import Account from './Account'
 
 interface ConnectWalletInterface {
@@ -7,154 +8,160 @@ interface ConnectWalletInterface {
   closeModal: () => void
 }
 
-/**
- * ConnectWallet Modal Component
- * Displays wallet connection options (Pera, Defly, Lute, KMD for LocalNet)
- * Also shows connected wallet details and network information when logged in
- */
 const ConnectWallet = ({ openModal, closeModal }: ConnectWalletInterface) => {
-  const { wallets, activeAddress } = useWallet()
+  // Destructure the new clean methods from your unified hook
+  const { isConnected, walletType, userInfo, traditionalWallets, connectGoogle, connectFacebook, connectGithub, disconnect } =
+    useUnifiedWallet()
+
+  const [connectingProvider, setConnectingProvider] = useState<SocialLoginProvider | null>(null)
   const dialogRef = useRef<HTMLDialogElement>(null)
 
-  // Manage native dialog element's open/close state
+  const handleSocialLogin = async (provider: SocialLoginProvider, connectFn: () => Promise<void>) => {
+    try {
+      setConnectingProvider(provider)
+      await connectFn() // Bypasses the Web3Auth modal
+      closeModal()
+    } catch (error) {
+      console.error(`${provider} login failed`, error)
+    } finally {
+      setConnectingProvider(null)
+    }
+  }
+
+  const socialOptions: { id: SocialLoginProvider; label: string; icon: string; action: () => Promise<void> }[] = [
+    {
+      id: 'google',
+      label: 'Continue with Google',
+      icon: 'https://www.gstatic.com/images/branding/product/1x/gsa_512dp.png',
+      action: connectGoogle,
+    },
+    {
+      id: 'facebook',
+      label: 'Continue with Facebook',
+      icon: 'https://www.facebook.com/images/fb_icon_325x325.png',
+      action: connectFacebook,
+    },
+    {
+      id: 'github',
+      label: 'Continue with GitHub',
+      icon: 'https://github.githubassets.com/images/modules/logos_page/GitHub-Mark.png',
+      action: connectGithub,
+    },
+  ]
+
+  const formatSocialProvider = (provider?: string) => {
+    const normalized = provider?.toLowerCase()
+    switch (normalized) {
+      case 'google':
+        return 'Google'
+      case 'facebook':
+        return 'Facebook'
+      case 'github':
+        return 'GitHub'
+      default:
+        return 'Social Login'
+    }
+  }
+
   useEffect(() => {
     const dialog = dialogRef.current
     if (!dialog) return
-
-    if (openModal) {
-      dialog.showModal()
-    } else {
-      dialog.close()
-    }
+    openModal ? dialog.showModal() : dialog.close()
   }, [openModal])
-
-  const getActiveWallet = () => {
-    if (!wallets) return null
-    return wallets.find((w) => w.isActive)
-  }
-
-  const getWalletDisplayName = (wallet: Wallet) => {
-    if (wallet.id === WalletId.KMD) return 'LocalNet Wallet'
-    return wallet.metadata.name
-  }
-
-  const isKmd = (wallet: Wallet) => wallet.id === WalletId.KMD
-
-  const activeWallet = getActiveWallet()
 
   return (
     <dialog
       ref={dialogRef}
-      id="connect_wallet_modal"
-      className="fixed inset-0 w-full max-w-lg mx-auto my-auto rounded-2xl bg-white dark:bg-slate-800 shadow-2xl border border-gray-200 dark:border-slate-700 overflow-hidden"
-      onClick={(e) => {
-        // Close when clicking the backdrop
-        if (e.target === dialogRef.current) {
-          closeModal()
-        }
-      }}
+      className="fixed inset-0 w-full max-w-md mx-auto my-auto rounded-3xl bg-white dark:bg-slate-900 shadow-2xl border-none p-0 backdrop:bg-gray-900/50 backdrop:backdrop-blur-sm"
+      onClick={(e) => e.target === dialogRef.current && closeModal()}
     >
-      <div className="p-6 sm:p-7">
-        <div className="flex items-center justify-between mb-5">
-          <h3 className="text-xl font-semibold text-gray-900 dark:text-slate-100">Select wallet provider</h3>
-          <button
-            className="text-gray-400 dark:text-slate-500 hover:text-gray-600 dark:hover:text-slate-300 transition text-sm"
-            onClick={closeModal}
-            aria-label="Close wallet modal"
-          >
-            ✕
+      <div className="p-8">
+        <div className="flex items-center justify-between mb-6">
+          <h3 className="text-2xl font-bold text-gray-900 dark:text-white">{isConnected ? 'Account' : 'Sign in'}</h3>
+          <button onClick={closeModal} className="p-2 hover:bg-gray-100 dark:hover:bg-slate-800 rounded-full transition">
+            <span className="text-xl text-gray-500">✕</span>
           </button>
         </div>
 
-        <p className="text-sm text-gray-500 dark:text-slate-400 mb-4">
-          Choose the wallet you want to connect. Supported: Pera, Defly, LocalNet (KMD), and others.
-        </p>
-
-        <div className="space-y-4">
-          {activeAddress && (
-            <>
-              <div className="rounded-xl border border-gray-100 dark:border-slate-700 bg-gray-50 dark:bg-slate-700 p-4">
+        <div className="space-y-6">
+          {isConnected ? (
+            /* --- CONNECTED STATE --- */
+            <div className="space-y-4">
+              <div className="bg-slate-50 dark:bg-slate-800 rounded-2xl p-4 border border-slate-100 dark:border-slate-700">
                 <Account />
-              </div>
 
-              {/* Wallet Info */}
-              <div className="space-y-3 bg-white dark:bg-slate-700 border border-gray-200 dark:border-slate-600 rounded-xl p-4">
-                {activeWallet && (
-                  <div>
-                    <p className="text-xs text-gray-500 dark:text-slate-400 font-medium mb-1">Connected Wallet</p>
-                    <p className="text-sm font-semibold text-gray-900 dark:text-slate-100">{getWalletDisplayName(activeWallet)}</p>
+                {walletType === 'web3auth' && userInfo && (
+                  <div className="mt-3 pt-3 border-t border-slate-200 dark:border-slate-700 flex items-center gap-3">
+                    {userInfo.profileImage && (
+                      <img src={userInfo.profileImage} alt="Profile" className="w-8 h-8 rounded-full border border-white" />
+                    )}
+                    <div className="overflow-hidden">
+                      <p className="text-[10px] uppercase tracking-wider text-gray-500 font-bold">
+                        Connected via {formatSocialProvider(userInfo.typeOfLogin)}
+                      </p>
+                      <p className="text-sm font-medium dark:text-slate-200 truncate">{userInfo.email || userInfo.name}</p>
+                    </div>
                   </div>
                 )}
               </div>
 
-              <div className="h-px bg-gray-200 dark:bg-slate-600" />
-            </>
-          )}
-
-          {!activeAddress &&
-            wallets?.map((wallet) => (
               <button
-                data-test-id={`${wallet.id}-connect`}
-                className={`
-                  w-full flex items-center gap-4 px-4 py-3 rounded-xl bg-white dark:bg-slate-700 border border-gray-200 dark:border-slate-600
-                  hover:border-indigo-200 dark:hover:border-indigo-500 hover:bg-indigo-50/50 dark:hover:bg-slate-600 transition
-                  focus:outline-none focus:ring-2 focus:ring-indigo-200 dark:focus:ring-indigo-500
-                `}
-                key={`provider-${wallet.id}`}
-                onClick={() => {
-                  // Close modal before initiating wallet connection
-                  closeModal()
-                  wallet.connect()
-                }}
+                onClick={disconnect} // Use the unified disconnect method
+                className="w-full py-3 bg-red-50 text-red-600 hover:bg-red-100 dark:bg-red-900/20 dark:text-red-400 font-semibold rounded-xl transition"
               >
-                {!isKmd(wallet) && (
-                  <img
-                    alt={`wallet_icon_${wallet.id}`}
-                    src={wallet.metadata.icon}
-                    className="w-9 h-9 object-contain rounded-md border border-gray-100 dark:border-slate-600 bg-white dark:bg-slate-700"
-                  />
-                )}
-                <span className="font-medium text-sm text-left flex-1 text-gray-900 dark:text-slate-100">
-                  {isKmd(wallet) ? 'LocalNet Wallet' : wallet.metadata.name}
-                </span>
-                {wallet.isActive && <span className="text-sm text-emerald-500">✓</span>}
+                Disconnect
               </button>
-            ))}
-        </div>
+            </div>
+          ) : (
+            /* --- DISCONNECTED STATE --- */
+            <>
+              <div className="space-y-3">
+                <p className="text-xs font-bold uppercase tracking-wider text-gray-400 px-1">Social Login</p>
+                {socialOptions.map((option) => (
+                  <button
+                    key={option.id}
+                    onClick={() => handleSocialLogin(option.id, option.action)}
+                    disabled={!!connectingProvider}
+                    className="w-full flex items-center justify-center gap-3 px-4 py-3.5 rounded-xl border border-gray-200 dark:border-slate-700 hover:bg-gray-50 dark:hover:bg-slate-800 transition shadow-sm font-medium text-gray-700 dark:text-slate-200 disabled:opacity-50"
+                  >
+                    <img src={option.icon} className="w-5 h-5" alt={option.label} />
+                    {connectingProvider === option.id ? 'Connecting...' : option.label}
+                  </button>
+                ))}
+              </div>
 
-        <div className="mt-6 flex gap-3">
-          <button
-            data-test-id="close-wallet-modal"
-            className="w-full sm:w-auto px-4 py-2.5 rounded-lg border border-gray-200 dark:border-slate-600 bg-gray-50 dark:bg-slate-700 text-gray-700 dark:text-slate-300 text-sm hover:bg-gray-100 dark:hover:bg-slate-600 transition"
-            onClick={() => {
-              closeModal()
-            }}
-          >
-            Close
-          </button>
+              <div className="relative">
+                <div className="absolute inset-0 flex items-center">
+                  <div className="w-full border-t border-gray-100 dark:border-slate-800"></div>
+                </div>
+                <div className="relative flex justify-center text-xs uppercase">
+                  <span className="bg-white dark:bg-slate-900 px-2 text-gray-400">Or use a wallet</span>
+                </div>
+              </div>
 
-          {activeAddress && (
-            <button
-              className="w-full sm:w-auto px-4 py-2.5 rounded-lg bg-red-500 hover:bg-red-600 dark:bg-red-600 dark:hover:bg-red-700 text-white text-sm transition"
-              data-test-id="logout"
-              onClick={async () => {
-                if (wallets) {
-                  const wallet = wallets.find((w) => w.isActive)
-                  if (wallet) {
-                    await wallet.disconnect()
-                  } else {
-                    localStorage.removeItem('@txnlab/use-wallet:v3')
-                    window.location.reload()
-                  }
-                }
-              }}
-            >
-              Logout
-            </button>
+              <div className="grid grid-cols-1 gap-3">
+                {traditionalWallets?.map((wallet) => (
+                  <button
+                    key={wallet.id}
+                    className="flex items-center gap-4 p-4 rounded-xl border border-gray-100 dark:border-slate-800 hover:border-indigo-500 dark:hover:border-indigo-500 hover:bg-indigo-50/30 transition group"
+                    onClick={() => {
+                      closeModal()
+                      wallet.connect()
+                    }}
+                  >
+                    <img src={wallet.metadata.icon} alt={wallet.id} className="w-10 h-10 rounded-lg group-hover:scale-110 transition" />
+                    <span className="font-semibold text-gray-800 dark:text-slate-200">
+                      {wallet.id === WalletId.KMD ? 'LocalNet' : wallet.metadata.name}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </>
           )}
         </div>
       </div>
     </dialog>
   )
 }
+
 export default ConnectWallet
