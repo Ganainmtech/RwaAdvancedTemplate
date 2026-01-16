@@ -1,7 +1,7 @@
 import { AlgorandClient } from '@algorandfoundation/algokit-utils'
 import { sha512_256 } from 'js-sha512'
 import { useSnackbar } from 'notistack'
-import { ChangeEvent, useEffect, useMemo, useRef, useState } from 'react'
+import { ChangeEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { AiOutlineCloudUpload, AiOutlineInfoCircle, AiOutlineLoading3Quarters } from 'react-icons/ai'
 import { BsCoin } from 'react-icons/bs'
 import { useUnifiedWallet } from '../hooks/useUnifiedWallet'
@@ -24,6 +24,14 @@ type CreatedAsset = {
   clawback?: string
   createdAt: string
 }
+
+/**
+ * Tri-state for USDC opt-in status
+ * - 'loading': blockchain query in progress, UI should show spinner/loading
+ * - 'opted-in': confirmed on-chain that user has opted in
+ * - 'not-opted-in': confirmed on-chain that user has NOT opted in
+ */
+type UsdcStatus = 'loading' | 'opted-in' | 'not-opted-in'
 
 const STORAGE_KEY = 'tokenize_assets'
 const LORA_BASE = 'https://lora.algokit.io/testnet'
@@ -131,7 +139,23 @@ export default function TokenizeAsset() {
   const [transferAmount, setTransferAmount] = useState<string>('1')
   const [transferLoading, setTransferLoading] = useState<boolean>(false)
 
-  // ===== NFT mint state (new) =====
+  // ===== USDC opt-in state =====
+  // Uses tri-state ('loading' | 'opted-in' | 'not-opted-in') to prevent infinite re-renders
+  // Refs are used to track state without causing callback recreations
+  const [usdcStatus, setUsdcStatus] = useState<UsdcStatus>('loading')
+  const [usdcBalance, setUsdcBalance] = useState<bigint>(0n)
+  const [usdcOptInLoading, setUsdcOptInLoading] = useState<boolean>(false)
+
+  // Track if we've completed at least one successful blockchain check for this address
+  const [hasCheckedUsdcOnChain, setHasCheckedUsdcOnChain] = useState<boolean>(false)
+
+  // Refs to prevent circular dependencies and duplicate operations
+  const hasShownUsdcWarningRef = useRef<boolean>(false) // Prevent duplicate snackbar warnings
+  const lastTransferModeRef = useRef<TransferMode>('manual') // Track mode changes
+  const isCheckingUsdcRef = useRef<boolean>(false) // Prevent duplicate status checks
+  const hasCheckedUsdcOnChainRef = useRef<boolean>(false) // Track checked state (avoids stale closures)
+
+  // ===== NFT mint state =====
   const [selectedFile, setSelectedFile] = useState<File | null>(null)
   const [previewUrl, setPreviewUrl] = useState<string>('')
   const [nftLoading, setNftLoading] = useState<boolean>(false)
@@ -161,6 +185,266 @@ export default function TokenizeAsset() {
   const algodConfig = getAlgodConfigFromViteEnvironment()
   const algorand = useMemo(() => AlgorandClient.fromConfig({ algodConfig }), [algodConfig])
 
+  // Derived booleans for convenience (only valid when hasCheckedUsdcOnChain is true)
+  const usdcOptedIn = usdcStatus === 'opted-in'
+  const usdcStatusLoading = usdcStatus === 'loading'
+
+  /**
+   * Fetch USDC opt-in status from blockchain
+   * Uses asset-specific API for reliable opt-in detection
+   * Falls back to account information API if needed
+   */
+  const checkUsdcOptInStatus = useCallback(async () => {
+    if (!activeAddress) {
+      setUsdcStatus('not-opted-in')
+      setUsdcBalance(0n)
+      setHasCheckedUsdcOnChain(false)
+      hasCheckedUsdcOnChainRef.current = false
+      isCheckingUsdcRef.current = false
+      return
+    }
+
+    // Prevent duplicate concurrent calls
+    if (isCheckingUsdcRef.current) {
+      return
+    }
+
+    isCheckingUsdcRef.current = true
+
+    // Only set loading if we haven't checked yet (preserve existing status during refresh)
+    if (!hasCheckedUsdcOnChainRef.current) {
+      setUsdcStatus('loading')
+    }
+
+    try {
+      // Method 1: Use asset-specific API (most reliable)
+      // Returns holding if opted in, throws if not opted in
+      let holding: any = null
+      let apiCallSucceeded = false
+
+      try {
+        holding = await algorand.asset.getAccountInformation(
+          activeAddress,
+          BigInt(TESTNET_USDC_ASSET_ID),
+        )
+        apiCallSucceeded = true
+      } catch (assetApiError: unknown) {
+        // API call failed - account is likely not opted in
+        const error = assetApiError as any
+
+        // Check if it's a 404/not found error (definitely not opted in)
+        // vs a network error (should fall through to method 2)
+        const isNotFoundError =
+          error?.message?.includes('not found') ||
+          error?.message?.includes('404') ||
+          error?.status === 404 ||
+          error?.response?.status === 404
+
+        if (isNotFoundError) {
+          setUsdcStatus('not-opted-in')
+          setUsdcBalance(0n)
+          setHasCheckedUsdcOnChain(true)
+          hasCheckedUsdcOnChainRef.current = true
+          return
+        }
+        // Non-404 error - fall through to method 2 for verification
+      }
+
+      // Process successful API call result
+      if (apiCallSucceeded && holding) {
+        const holdingAny = holding as any
+        const amount = holdingAny?.amount ?? holdingAny?.balance ?? 0
+        const balance = typeof amount === 'bigint' ? amount : BigInt(amount ?? 0)
+
+        setUsdcStatus('opted-in')
+        setUsdcBalance(balance)
+        setHasCheckedUsdcOnChain(true)
+        hasCheckedUsdcOnChainRef.current = true
+        return
+      }
+
+      // Method 2: Fallback to account information API
+      // Used when method 1 has non-404 errors or for verification
+      const info = await algorand.client.algod.accountInformation(activeAddress).do()
+      const assets: Array<{ ['asset-id']: number; amount?: number }> = info?.assets ?? []
+
+      const usdcHolding = assets.find((a) => a['asset-id'] === TESTNET_USDC_ASSET_ID)
+
+      if (usdcHolding) {
+        const balance = BigInt(usdcHolding.amount ?? 0)
+        setUsdcStatus('opted-in')
+        setUsdcBalance(balance)
+      } else {
+        setUsdcStatus('not-opted-in')
+        setUsdcBalance(0n)
+      }
+
+      // Mark that we've successfully completed a blockchain check
+      setHasCheckedUsdcOnChain(true)
+      hasCheckedUsdcOnChainRef.current = true
+    } catch (e) {
+      console.error('Failed to check USDC opt-in', e)
+      // On error, set to not-opted-in but don't mark as checked
+      // This allows retry on next render cycle
+      setUsdcStatus('not-opted-in')
+      setUsdcBalance(0n)
+      setHasCheckedUsdcOnChain(false)
+      hasCheckedUsdcOnChainRef.current = false
+    } finally {
+      isCheckingUsdcRef.current = false
+    }
+    // Note: hasCheckedUsdcOnChain is read from closure, not needed in deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeAddress, algorand])
+
+  // Effect: Check USDC status when address changes or on mount
+  // Small delay allows wallet state to stabilize after reconnect
+  useEffect(() => {
+    // Reset state when address changes
+    setHasCheckedUsdcOnChain(false)
+    hasCheckedUsdcOnChainRef.current = false
+    hasShownUsdcWarningRef.current = false
+    isCheckingUsdcRef.current = false
+
+    if (!activeAddress) {
+      setUsdcStatus('not-opted-in')
+      setUsdcBalance(0n)
+      return
+    }
+
+    // Set loading immediately, then check after delay
+    setUsdcStatus('loading')
+
+    const timeoutId = setTimeout(() => {
+      checkUsdcOptInStatus()
+    }, 500)
+
+    return () => clearTimeout(timeoutId)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeAddress])
+
+  // Effect: Handle transfer mode changes and show appropriate warnings
+  // Only shows warnings after blockchain state is confirmed (not during loading)
+  useEffect(() => {
+    const prevMode = lastTransferModeRef.current
+    const modeChanged = prevMode !== transferMode
+    lastTransferModeRef.current = transferMode
+
+    // Set transfer asset ID based on mode
+    if (transferMode === 'algo') {
+      setTransferAssetId('ALGO')
+    } else if (transferMode === 'usdc') {
+      setTransferAssetId(String(TESTNET_USDC_ASSET_ID))
+
+      // Show warnings only when:
+      // 1. Actually switching TO usdc mode (not just re-render)
+      // 2. Blockchain check is complete (status confirmed)
+      // 3. Warning hasn't been shown already
+      if (
+        modeChanged &&
+        hasCheckedUsdcOnChain &&
+        !hasShownUsdcWarningRef.current &&
+        usdcStatus === 'not-opted-in'
+      ) {
+        enqueueSnackbar('You are not opted in to USDC yet. Please opt in before receiving or sending USDC.', {
+          variant: 'info',
+        })
+        hasShownUsdcWarningRef.current = true
+      } else if (
+        modeChanged &&
+        hasCheckedUsdcOnChain &&
+        !hasShownUsdcWarningRef.current &&
+        usdcStatus === 'opted-in' &&
+        usdcBalance === 0n
+      ) {
+        enqueueSnackbar('Heads up: you have 0 USDC to send.', { variant: 'info' })
+        hasShownUsdcWarningRef.current = true
+      }
+    } else {
+      // Manual mode - reset asset ID if it was set to ALGO or USDC
+      if (transferAssetId === 'ALGO' || transferAssetId === String(TESTNET_USDC_ASSET_ID)) {
+        setTransferAssetId('')
+      }
+      // Prefill with latest created asset if available
+      if (!transferAssetId && createdAssets.length > 0) {
+        setTransferAssetId(String(createdAssets[0].assetId))
+      }
+    }
+
+    // Reset warning flag when leaving USDC mode
+    if (prevMode === 'usdc' && transferMode !== 'usdc') {
+      hasShownUsdcWarningRef.current = false
+    }
+    // Note: We intentionally don't include usdcStatus/usdcBalance in deps to avoid re-runs on status changes
+    // We only want this to run when transferMode or hasCheckedUsdcOnChain changes
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [transferMode, hasCheckedUsdcOnChain, enqueueSnackbar])
+
+  /**
+   * Opt-in to TestNet USDC
+   * Opt-in is an asset transfer of 0 USDC to self
+   */
+  const handleOptInUsdc = async () => {
+    if (!signer || !activeAddress) {
+      enqueueSnackbar('Please connect a wallet or continue with Google first.', { variant: 'warning' })
+      return
+    }
+
+    // Prevent duplicate transactions if already opted in
+    if (usdcOptedIn) {
+      enqueueSnackbar('You are already opted in to USDC ✅', { variant: 'info' })
+      return
+    }
+
+    try {
+      setUsdcOptInLoading(true)
+      enqueueSnackbar('Opting into USDC...', { variant: 'info' })
+
+      // Opt-in = asset transfer of 0 to self
+      const result = await algorand.send.assetTransfer({
+        sender: activeAddress,
+        signer,
+        assetId: TESTNET_USDC_ASSET_ID,
+        receiver: activeAddress,
+        amount: 0n,
+      })
+
+      const txId = (result as { txId?: string }).txId
+
+      // Optimistically update status immediately after successful transaction
+      setUsdcStatus('opted-in')
+      setUsdcBalance(0n)
+      setHasCheckedUsdcOnChain(true)
+      hasCheckedUsdcOnChainRef.current = true
+      hasShownUsdcWarningRef.current = true // Prevent warning since we just opted in
+
+      enqueueSnackbar('✅ USDC opted in!', {
+        variant: 'success',
+        action: () =>
+          txId ? (
+            <a
+              href={`${LORA_BASE}/transaction/${txId}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{ textDecoration: 'underline', marginLeft: 8 }}
+            >
+              View Tx on Lora ↗
+            </a>
+          ) : null,
+      })
+
+      // Verify with blockchain after delay to confirm opt-in
+      setTimeout(() => {
+        checkUsdcOptInStatus()
+      }, 2000)
+    } catch (e) {
+      console.error('USDC opt-in failed', e)
+      enqueueSnackbar('USDC opt-in failed.', { variant: 'error' })
+    } finally {
+      setUsdcOptInLoading(false)
+    }
+  }
+
   useEffect(() => {
     setCreatedAssets(loadAssets())
   }, [])
@@ -181,25 +465,6 @@ export default function TokenizeAsset() {
       setTransferAssetId(String(createdAssets[0].assetId))
     }
   }, [createdAssets, transferAssetId, transferMode])
-
-  // When switching transfer mode, set the asset id display/value accordingly
-  useEffect(() => {
-    if (transferMode === 'algo') {
-      setTransferAssetId('ALGO')
-    } else if (transferMode === 'usdc') {
-      setTransferAssetId(String(TESTNET_USDC_ASSET_ID))
-    } else {
-      // manual: keep whatever the user had, but if it was ALGO then clear
-      if (transferAssetId === 'ALGO' || transferAssetId === String(TESTNET_USDC_ASSET_ID)) {
-        setTransferAssetId('')
-      }
-      // If we have history, prefill from latest
-      if (!transferAssetId && createdAssets.length > 0) {
-        setTransferAssetId(String(createdAssets[0].assetId))
-      }
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [transferMode])
 
   const resetDefaults = () => {
     setAssetName('Tokenized Coffee Membership')
@@ -339,7 +604,8 @@ export default function TokenizeAsset() {
   }
 
   /**
-   * Transfer (Manual ASA / USDC ASA / ALGO payment)
+   * Transfer assets (Manual ASA / USDC ASA / ALGO payment)
+   * Handles validation, amount conversion, and transaction submission
    */
   const handleTransferAsset = async () => {
     if (!signer || !activeAddress) {
@@ -357,7 +623,7 @@ export default function TokenizeAsset() {
       return
     }
 
-    // Manual ASA validates Asset ID + whole-number amount
+    // Manual ASA: validate Asset ID and whole-number amount
     if (transferMode === 'manual') {
       if (!transferAssetId || !isWholeNumber(transferAssetId)) {
         enqueueSnackbar('Please enter a valid Asset ID (number).', { variant: 'warning' })
@@ -369,12 +635,18 @@ export default function TokenizeAsset() {
       }
     }
 
-    // USDC + ALGO allow decimals up to 6
+    // USDC + ALGO: allow decimals up to 6 places
     if (transferMode === 'algo' || transferMode === 'usdc') {
       if (!/^\d+(\.\d+)?$/.test(transferAmount.trim())) {
         enqueueSnackbar('Amount must be a valid number (decimals allowed).', { variant: 'warning' })
         return
       }
+    }
+
+    // USDC: block transfer if not opted in (only if status is confirmed, not during loading)
+    if (transferMode === 'usdc' && hasCheckedUsdcOnChain && !usdcOptedIn) {
+      enqueueSnackbar('You must opt-in to USDC before you can send/receive it.', { variant: 'warning' })
+      return
     }
 
     try {
@@ -409,9 +681,24 @@ export default function TokenizeAsset() {
             ) : null,
         })
       } else if (transferMode === 'usdc') {
-        enqueueSnackbar('Sending USDC...', { variant: 'info' })
+        // Double-check opt-in status (in case it changed)
+        if (hasCheckedUsdcOnChain && !usdcOptedIn) {
+          enqueueSnackbar('You are not opted in to USDC yet. Please opt in first.', { variant: 'warning' })
+          return
+        }
 
+        if (usdcBalance === 0n) {
+          enqueueSnackbar('You have 0 USDC to send.', { variant: 'warning' })
+          return
+        }
+
+        enqueueSnackbar('Sending USDC...', { variant: 'info' })
         const usdcAmount = decimalToBaseUnits(transferAmount, USDC_DECIMALS)
+
+        if (usdcAmount > usdcBalance) {
+          enqueueSnackbar('Insufficient USDC balance for this transfer.', { variant: 'warning' })
+          return
+        }
 
         const result = await algorand.send.assetTransfer({
           sender: activeAddress,
@@ -437,6 +724,11 @@ export default function TokenizeAsset() {
               </a>
             ) : null,
         })
+
+        // Refresh balance after transfer to show updated amount
+        setTimeout(() => {
+          checkUsdcOptInStatus()
+        }, 2000)
       } else {
         // manual ASA
         enqueueSnackbar('Transferring asset...', { variant: 'info' })
@@ -470,11 +762,13 @@ export default function TokenizeAsset() {
       setReceiverAddress('')
       setTransferAmount('1')
     } catch (error) {
-      console.error(error)
+      console.error('Transfer failed', error)
       if (transferMode === 'algo') {
         enqueueSnackbar('ALGO send failed.', { variant: 'error' })
       } else {
-        enqueueSnackbar('Transfer failed. If sending an ASA (incl. USDC), make sure the recipient has opted in.', { variant: 'error' })
+        enqueueSnackbar('Transfer failed. If sending an ASA (incl. USDC), make sure the recipient has opted in.', {
+          variant: 'error',
+        })
       }
     } finally {
       setTransferLoading(false)
@@ -638,6 +932,41 @@ export default function TokenizeAsset() {
 
   const transferAssetIdLabel = transferMode === 'algo' ? 'Asset (ALGO)' : transferMode === 'usdc' ? 'Asset (USDC)' : 'Asset ID'
 
+  // Helper to render USDC status text
+  const renderUsdcStatusText = () => {
+    if (usdcStatusLoading) {
+      return <span className="text-slate-500 dark:text-slate-400">Checking status...</span>
+    }
+    if (usdcOptedIn) {
+      return <span className="text-teal-700 dark:text-teal-300">Already opted in ✅</span>
+    }
+    return <span className="text-slate-600 dark:text-slate-300">Required before you can receive TestNet USDC.</span>
+  }
+
+  // Helper to render opt-in button text
+  const renderOptInButtonText = () => {
+    if (usdcOptInLoading) {
+      return (
+        <span className="flex items-center gap-2">
+          <AiOutlineLoading3Quarters className="animate-spin" />
+          Opting in…
+        </span>
+      )
+    }
+    if (usdcStatusLoading) {
+      return (
+        <span className="flex items-center gap-2">
+          <AiOutlineLoading3Quarters className="animate-spin" />
+          Checking…
+        </span>
+      )
+    }
+    if (usdcOptedIn) {
+      return 'USDC opted in ✅'
+    }
+    return 'Opt in USDC'
+  }
+
   return (
     <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-700 shadow-lg p-6 sm:p-8">
       {/* Top header */}
@@ -669,7 +998,6 @@ export default function TokenizeAsset() {
                 </a>
               </div>
             </div>
-
           </div>
         </div>
       </div>
@@ -1164,11 +1492,35 @@ export default function TokenizeAsset() {
         <div className="mt-12 bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-700 shadow-lg p-6 sm:p-8">
           <h3 className="text-lg font-bold text-slate-900 dark:text-white mb-2">Transfer</h3>
           <p className="text-sm text-slate-600 dark:text-slate-400 mb-6">Send ALGO, USDC, or any ASA (including NFTs) to another wallet.</p>
+
+          {/* USDC Opt-in (only relevant for receiving USDC) */}
+          <div className="mb-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/40 p-4">
+            <div className="text-sm text-slate-700 dark:text-slate-200">
+              <span className="font-semibold">USDC Opt-In:</span> {renderUsdcStatusText()}
+              <div className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+                Asset ID: <span className="font-mono">{TESTNET_USDC_ASSET_ID}</span>
+              </div>
+            </div>
+
+            <button
+              type="button"
+              onClick={handleOptInUsdc}
+              disabled={!activeAddress || usdcOptedIn || usdcOptInLoading || usdcStatusLoading}
+              className={`inline-flex items-center justify-center px-4 py-2 rounded-lg font-semibold transition ${
+                !activeAddress || usdcOptedIn || usdcOptInLoading || usdcStatusLoading
+                  ? 'bg-slate-300 text-slate-500 cursor-not-allowed dark:bg-slate-700 dark:text-slate-400'
+                  : 'bg-teal-600 hover:bg-teal-700 text-white shadow-md'
+              }`}
+            >
+              {renderOptInButtonText()}
+            </button>
+          </div>
+
           {/* TestNet USDC helper */}
           <div className="mb-6 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/40 p-4">
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
               <div className="text-sm text-slate-700 dark:text-slate-200">
-                Need TestNet USDC? Use Circle’s faucet, then transfer it like any ASA.
+                Need TestNet USDC? Use Circle&apos;s faucet, then transfer it like any ASA.
                 <span className="block text-xs text-slate-500 dark:text-slate-400 mt-1">
                   Note: you may need to opt-in to the USDC asset before receiving it.
                 </span>
