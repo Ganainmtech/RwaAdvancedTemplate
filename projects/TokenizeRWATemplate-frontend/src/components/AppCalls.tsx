@@ -3,7 +3,7 @@ import { OnSchemaBreak, OnUpdate } from '@algorandfoundation/algokit-utils/types
 import { useWallet } from '@txnlab/use-wallet-react'
 import { useSnackbar } from 'notistack'
 import { useState } from 'react'
-import { HelloWorldFactory } from '../../TokenizeRWATemplate-contracts/smart_contracts/artifacts/hello_world/HelloWorldClient'
+import { HelloWorldFactory } from '../contracts/HelloWorldClient'
 import { getAlgodConfigFromViteEnvironment, getIndexerConfigFromViteEnvironment } from '../utils/network/getAlgoClientConfigs'
 
 interface AppCallsInterface {
