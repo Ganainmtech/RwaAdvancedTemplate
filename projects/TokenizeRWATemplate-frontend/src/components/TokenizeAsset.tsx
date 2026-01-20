@@ -12,7 +12,7 @@ import { getAlgodConfigFromViteEnvironment } from '../utils/network/getAlgoClien
  * Captures ASA configuration including compliance fields
  */
 type CreatedAsset = {
-  assetId: bigint
+  assetId: string
   assetName: string
   unitName: string
   total: string
@@ -575,7 +575,7 @@ export default function TokenizeAsset() {
       const assetId = createResult.assetId
 
       const newEntry: CreatedAsset = {
-        assetId: BigInt(assetId),
+        assetId: String(assetId),
         assetName: String(assetName),
         unitName: String(unitName),
         total: String(total),
@@ -900,7 +900,7 @@ export default function TokenizeAsset() {
 
       // ✅ Persist minted NFT into SAME history list (NFTs are ASAs)
       const nftEntry: CreatedAsset = {
-        assetId: BigInt(assetId),
+        assetId: String(assetId),
         assetName: String(nftName),
         unitName: String(nftUnit),
         total: String(nftSupply),
