@@ -1,4 +1,4 @@
-import TokenizeAsset from './components/TokenizeAsset'
+import TokenizeAsset from './components/TokenizeWorkspace'
 
 /**
  * Tokenize Page

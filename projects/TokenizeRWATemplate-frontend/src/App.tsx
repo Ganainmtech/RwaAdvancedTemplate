@@ -2,19 +2,16 @@ import { SupportedWallet, WalletId, WalletManager, WalletProvider } from '@txnla
 import { Analytics } from '@vercel/analytics/react'
 import { SnackbarProvider } from 'notistack'
 import { useMemo } from 'react'
-import { BrowserRouter, Route, Routes } from 'react-router-dom'
+import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
 import Home from './Home'
 import Layout from './Layout'
-import TokenizePage from './TokenizePage'
+import TokenizeMintPage from './TokenizeMintPage'
+import TokenizeNftPage from './TokenizeNftPage'
+import TokenizeTransferPage from './TokenizeTransferPage'
 import { getAlgodConfigFromViteEnvironment, getKmdConfigFromViteEnvironment } from './utils/network/getAlgoClientConfigs'
 
-// Get Web3Auth client ID from environment
 const web3AuthClientId = (import.meta.env.VITE_WEB3AUTH_CLIENT_ID ?? '').trim()
 
-/**
- * Build supported wallets list based on env/network.
- * NOTE: Web3Auth defaults to sapphire_mainnet unless web3AuthNetwork is provided.
- */
 function buildSupportedWallets(): SupportedWallet[] {
   if (import.meta.env.VITE_ALGOD_NETWORK === 'localnet') {
     const kmdConfig = getKmdConfigFromViteEnvironment()
@@ -31,20 +28,17 @@ function buildSupportedWallets(): SupportedWallet[] {
     ]
   }
 
-  // TestNet/MainNet wallets
   const wallets: SupportedWallet[] = [{ id: WalletId.PERA }, { id: WalletId.DEFLY }, { id: WalletId.LUTE }]
 
-  // Only add Web3Auth if we actually have a client id
-  // use-wallet v4.4.0+ includes built-in Web3Auth provider
   if (web3AuthClientId) {
     wallets.push({
       id: WalletId.WEB3AUTH,
       options: {
         clientId: web3AuthClientId,
-        web3AuthNetwork: 'sapphire_devnet', // Use 'sapphire_mainnet' for production
+        web3AuthNetwork: 'sapphire_devnet',
         uiConfig: {
           appName: 'Tokenize RWA Template',
-          mode: 'auto', // 'auto' | 'light' | 'dark'
+          mode: 'auto',
         },
       },
     })
@@ -84,7 +78,14 @@ export default function App() {
           <Routes>
             <Route element={<Layout />}>
               <Route path="/" element={<Home />} />
-              <Route path="/tokenize" element={<TokenizePage />} />
+
+              {/* redirect legacy /tokenize to mint */}
+              <Route path="/tokenize" element={<Navigate to="/tokenize/mint" replace />} />
+
+              {/* new split pages */}
+              <Route path="/tokenize/mint" element={<TokenizeMintPage />} />
+              <Route path="/tokenize/nft" element={<TokenizeNftPage />} />
+              <Route path="/tokenize/transfer" element={<TokenizeTransferPage />} />
             </Route>
           </Routes>
         </BrowserRouter>

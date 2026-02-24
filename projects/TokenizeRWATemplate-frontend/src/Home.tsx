@@ -1,3 +1,4 @@
+// Home.tsx
 import { useWallet } from '@txnlab/use-wallet-react'
 import { Link } from 'react-router-dom'
 
@@ -28,7 +29,7 @@ export default function Home() {
 
           <div className="mt-8 flex flex-col sm:flex-row gap-4 justify-center">
             <Link
-              to="/tokenize"
+              to="/tokenize/mint"
               className={`px-8 py-3 rounded-lg font-semibold transition text-white shadow-md ${
                 activeAddress ? 'bg-teal-600 hover:bg-teal-700' : 'bg-slate-400 cursor-not-allowed'
               }`}
@@ -254,7 +255,7 @@ export default function Home() {
             Launch your first RWA token in minutes. No complicated setup, no hidden fees.
           </p>
           <Link
-            to="/tokenize"
+            to="/tokenize/mint"
             className={`inline-block px-8 py-3 rounded-lg font-semibold transition ${
               activeAddress
                 ? 'bg-white text-teal-600 dark:bg-slate-800 dark:text-teal-400 hover:bg-slate-100 dark:hover:bg-slate-700 shadow-md'

@@ -1,3 +1,4 @@
+// Layout.tsx
 import { useWallet } from '@txnlab/use-wallet-react'
 import { useState } from 'react'
 import { NavLink, Outlet } from 'react-router-dom'
@@ -11,12 +12,11 @@ export default function Layout() {
 
   const toggleWalletModal = () => setOpenWalletModal(!openWalletModal)
 
-  // Check if wallet is connected - activeAddress is the primary indicator
-  // isActive might be undefined for Web3Auth, so we check activeAddress
   const isConnected = Boolean(activeAddress)
-
-  // Helper to format address: "ZBC...WXYZ"
   const displayAddress = isConnected && activeAddress ? ellipseAddress(activeAddress, 4) : 'Sign in'
+
+  const navLinkClass = ({ isActive }: { isActive: boolean }) =>
+    `text-sm font-semibold transition ${isActive ? 'text-teal-600' : 'text-slate-500 hover:text-slate-900 dark:hover:text-white'}`
 
   return (
     <div className="min-h-screen flex flex-col bg-white dark:bg-slate-950 text-slate-900 dark:text-slate-100">
@@ -29,23 +29,23 @@ export default function Layout() {
 
           {/* Desktop Navigation */}
           <div className="hidden sm:flex items-center gap-8">
-            {['Home', 'Tokenize'].map((item) => (
-              <NavLink
-                key={item}
-                to={item === 'Home' ? '/' : `/${item.toLowerCase()}`}
-                className={({ isActive }) =>
-                  `text-sm font-semibold transition ${isActive ? 'text-teal-600' : 'text-slate-500 hover:text-slate-900 dark:hover:text-white'}`
-                }
-              >
-                {item}
-              </NavLink>
-            ))}
+            <NavLink to="/" className={navLinkClass}>
+              Home
+            </NavLink>
+            <NavLink to="/tokenize/mint" className={navLinkClass}>
+              Mint Asset
+            </NavLink>
+            <NavLink to="/tokenize/nft" className={navLinkClass}>
+              Mint NFT
+            </NavLink>
+            <NavLink to="/tokenize/transfer" className={navLinkClass}>
+              Transfer
+            </NavLink>
           </div>
 
           <div className="flex items-center gap-4">
             <ThemeToggle />
 
-            {/* Sign In / Account Button */}
             <button
               onClick={toggleWalletModal}
               className={`flex items-center gap-2 px-5 py-2 rounded-xl font-bold text-sm transition shadow-sm border ${
@@ -74,7 +74,7 @@ export default function Layout() {
           </div>
           <div className="text-sm">
             <span className="text-white font-bold block mb-2">Connect</span>
-            <a href="https://lora.algokit.io" target="_blank" className="hover:text-teal-400 transition">
+            <a href="https://lora.algokit.io" target="_blank" className="hover:text-teal-400 transition" rel="noreferrer">
               Lora Explorer →
             </a>
           </div>
@@ -82,7 +82,6 @@ export default function Layout() {
         </div>
       </footer>
 
-      {/* Wallet Modal */}
       <ConnectWallet openModal={openWalletModal} closeModal={toggleWalletModal} />
     </div>
   )
